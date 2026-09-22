@@ -1,0 +1,30 @@
+{
+  "name": "opencode-session-id",
+  "version": "0.1.0",
+  "description": "OC2/V2 TUI plugin: render the current session ID beneath the sidebar session title (V1 parity)",
+  "type": "module",
+  "private": true,
+  "opencode": {
+    "plugin": true
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "tui",
+    "v2",
+    "oc2",
+    "session",
+    "sidebar"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "test": "bun test --conditions=browser v2"
+  },
+  "devDependencies": {
+    "@opentui/core": "0.5.10",
+    "@opentui/solid": "0.5.10",
+    "@types/bun": "1.4.0",
+    "solid-js": "1.9.15",
+    "typescript": "5.8.2"
+  }
+}

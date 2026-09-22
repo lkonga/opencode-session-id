@@ -1,0 +1,11 @@
+{
+  "name": "@lkonga/opencode-session-id-v2",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./tui": "./tui.tsx"
+  },
+  "scripts": {
+    "test": "bun test --conditions=browser"
+  }
+}
