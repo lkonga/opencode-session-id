@@ -30,7 +30,7 @@ export const CHANNEL_HIDING_SESSION_ID = "latest"
 export interface SessionIDRowInput {
   /** `context.app.channel` — the public V2 analogue of `InstallationChannel`. */
   readonly channel: string | undefined
-  /** The `sidebar.content` slot input. Reactive on session switch. */
+  /** The `sidebar.title` slot input. Reactive on session switch. */
   readonly sessionID: string | undefined
 }
 
