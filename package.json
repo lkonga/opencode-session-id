@@ -18,7 +18,8 @@
   ],
   "license": "MIT",
   "scripts": {
-    "test": "bun test --conditions=browser v2"
+    "test": "bun test --conditions=browser v2",
+    "test:no-core": "OPENCODE_CORE_OPTIONAL=1 bun test --conditions=browser v2"
   },
   "devDependencies": {
     "@opentui/core": "0.5.10",

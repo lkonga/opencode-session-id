@@ -3,25 +3,23 @@
  *
  * Everything asserted here is a fact about the *artifact* rather than runtime
  * behaviour: which file the V2 loader resolves, which modules exist in the V2
- * graph, and that this plugin adds exactly one slot claim, in the one placement
- * that puts it directly beneath the session title.
+ * graph, and that this plugin adds exactly one slot claim, on the one path that
+ * puts it directly beneath the session title.
  *
- * The behavioural counterparts live in `session-id.test.tsx`; the V1 freeze
- * guard lives in `v1-byte-guard.test.ts`.
+ * The behavioural counterparts live in `session-id.test.tsx`; the host-side
+ * geometry lives in the core repo
+ * (`packages/tui/test/routes/session/sidebar-title-slot.test.tsx`).
  */
 import { describe, expect, test } from "bun:test"
 import fs from "node:fs"
 import path from "node:path"
+import { stripComments } from "./source"
 
 const v2 = path.resolve(import.meta.dir, "..")
 
 const read = (file: string) => fs.readFileSync(file, "utf8")
-/** Strips `//` comments so structural scans describe code, not prose. */
-const code = (source: string) =>
-  source
-    .split("\n")
-    .map((line) => line.replace(/\/\/.*$/, ""))
-    .join("\n")
+/** Comments (line and block) removed, so scans describe code and not prose. */
+const code = stripComments
 
 /** Parsed import specifiers of one module — a parse, not a substring match. */
 function importsOf(file: string): string[] {
@@ -48,10 +46,11 @@ const pkg = JSON.parse(read(path.join(v2, "package.json")))
 
 describe("V2 entrypoint", () => {
   test("exposes the directory-resolved ./tui entrypoint the loader resolves", () => {
+    // The loader joins `<plugin directory>/tui` and resolves it as a path, so
+    // the registered directory is `.../opencode-session-id/v2` and the file it
+    // reaches is `v2/tui.tsx`. A `tui.ts` sibling must not exist, or extension
+    // order would decide which one wins.
     expect(pkg.exports["./tui"]).toBe("./tui.tsx")
-    // resolveLocal() joins `<dir>/tui` and resolves it as a path, so the file
-    // must exist with a resolvable extension — and a `tui.ts` sibling must not
-    // exist, or the loader's extension order decides which one wins.
     expect(fs.existsSync(path.join(v2, "tui.tsx"))).toBe(true)
     expect(fs.existsSync(path.join(v2, "tui.ts"))).toBe(false)
   })
@@ -66,6 +65,7 @@ describe("V2 entrypoint", () => {
       "@opencode/plugin/tui",
       "solid-js",
     ])
+
     for (const specifier of specifiers.filter((item) => item.startsWith("."))) {
       const target = resolvesTo(tui, specifier)
       expect(target, `${specifier} must resolve`).toBeDefined()
@@ -73,18 +73,28 @@ describe("V2 entrypoint", () => {
     }
   })
 
-  test("declares exactly one claim, prepended to sidebar.content", () => {
+  test("declares exactly one claim, prepended to sidebar.title", () => {
     const source = code(read(path.join(v2, "tui.tsx")))
 
     // One claim, or the row's position stops being deterministic.
     expect(source.match(/ui\.slot\(/g)).toHaveLength(1)
     expect(source).toContain("Plugin.define(")
-    expect(source).toContain('prepend: "sidebar.content"')
+    expect(source).toContain('prepend: "sidebar.title"')
 
     // No competing placement key, or the claim could land elsewhere.
     for (const placement of ["append", "before", "after", "replace"]) {
       expect(source, `unexpected placement key ${placement}`).not.toContain(`${placement}:`)
     }
+  })
+
+  test("block comments cannot satisfy the structural scan", () => {
+    // Regression guard for the stripper itself: prose that names a structure
+    // must not count as that structure.
+    const prose = `/** example: ui.slot({ append: "app" }) */\nconst value = 1`
+    expect(code(prose)).not.toContain("ui.slot(")
+    expect(code(prose)).toContain("const value = 1")
+    // A `//` inside a string is not a comment.
+    expect(code(`const url = "https://example.test/x"`)).toContain("https://example.test/x")
   })
 })
 

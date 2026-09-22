@@ -10,8 +10,11 @@
  *     </Show>
  *
  * upstream commit b5aba5807cfbcafc57ffd488cbcb0148f8f1f4d6
- *   "feat(tui): show session ID in sidebar on non-prod channels (#23185)"
- * channel gate added by 106f8e94d67 (`refactor(tui): extract standalone package`).
+ *   "feat(tui): show session ID in sidebar on non-prod channels (#23185)" — this
+ *   commit added BOTH the row and its `channel !== "latest"` gate.
+ * 106f8e94d67 (`refactor(tui): extract standalone package`) only refactored
+ *   where the channel comes from (`useTuiBuildInfo().channel` ->
+ *   the `InstallationChannel` constant); it did not change the gate.
  *
  * The decision is a pure function of the host channel and the slot's session
  * input, so it is testable without a TUI and cannot hold state — which is what

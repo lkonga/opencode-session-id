@@ -8,7 +8,7 @@
  * change.
  *
  * Pinned V1 reference:
- *   fork      lkonga/opencode (origin codeberg.org:lkonga/opencode.git)
+ *   fork      lkonga/opencode
  *   tag       v1.18.30
  *   commit    3104c1428ec91f809e5ab86631300de41eb6952e
  *   file      packages/tui/src/routes/session/sidebar.tsx
@@ -24,19 +24,16 @@
  * deliberately does not read a V1 working tree, whose HEAD legitimately moves
  * between V1 and V2 on this host.
  *
- * The repository-backed assertions need the V1/V2 core clone on disk. Set
- * `OPENCODE_CORE_REPO` to point at it; the default is the host clone. When the
- * clone is absent (for example a build host that only has this plugin synced)
- * those assertions are skipped with a visible reason — the self-contained
- * invariants below always run.
+ * Fail-closed: when the clone or the tag is missing this suite goes RED unless
+ * `OPENCODE_CORE_OPTIONAL=1` asks for an explicit skip. See `core-repo.ts`.
  */
 import { describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
+import { CORE_REPO, coreGate, git, requireGate } from "./core-repo"
 
 const V1 = {
-  repo: process.env["OPENCODE_CORE_REPO"] ?? "/home/lkonga/codes/opencode",
   ref: "v1.18.30",
   commit: "3104c1428ec91f809e5ab86631300de41eb6952e",
   file: "packages/tui/src/routes/session/sidebar.tsx",
@@ -46,30 +43,9 @@ const V1 = {
 
 const v2 = path.resolve(import.meta.dir, "..")
 const repoRoot = path.resolve(v2, "..")
-const hasRepo = fs.existsSync(path.join(V1.repo, ".git"))
 
-/**
- * Whether the pinned V1 commit is actually present. A clone that only carries
- * the V2 line is not enough, so each guard skips independently rather than
- * assuming one clone serves both.
- */
-const reachable =
-  hasRepo &&
-  Bun.spawnSync(["git", "-C", V1.repo, "cat-file", "-e", `${V1.commit}^{commit}`], {
-    stdout: "pipe",
-    stderr: "pipe",
-  }).exitCode === 0
-
-function git(args: readonly string[]): { readonly ok: boolean; readonly stdout: Buffer } {
-  const proc = Bun.spawnSync(["git", "-C", V1.repo, ...args], { stdout: "pipe", stderr: "pipe" })
-  return { ok: proc.exitCode === 0, stdout: Buffer.from(proc.stdout) }
-}
-
-const pinnedCommit = hasRepo ? git(["rev-parse", `${V1.ref}^{commit}`]) : undefined
-const pinnedBlob = hasRepo ? git(["rev-parse", `${V1.ref}:${V1.file}`]) : undefined
-const pinnedBytes = hasRepo ? git(["cat-file", "blob", V1.blob]) : undefined
-
-const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex")
+const gate = coreGate(V1.ref, `V1 byte guard (${CORE_REPO})`)
+const repoBacked = describe.skipIf(!gate.present)
 
 describe("V1 byte guard (self-contained)", () => {
   test("the pinned reference is well formed", () => {
@@ -88,21 +64,28 @@ describe("V1 byte guard (self-contained)", () => {
   })
 })
 
-const repoBacked = describe.skipIf(!reachable)
+test("REQUIRED: the pinned V1 reference is available", requireGate(gate, "V1 byte guard"))
 
 repoBacked("V1 artifact is byte-identical (repo-backed)", () => {
   test("the pinned tag still resolves to the pinned commit", () => {
-    expect(pinnedCommit?.ok, `git rev-parse ${V1.ref}^{commit} failed`).toBe(true)
-    expect(pinnedCommit?.stdout.toString().trim()).toBe(V1.commit)
+    const resolved = git(["rev-parse", `${V1.ref}^{commit}`])
+    expect(resolved, `git rev-parse ${V1.ref}^{commit} failed`).toBeDefined()
+    expect(resolved!.trim()).toBe(V1.commit)
   })
 
   test("the V1 sidebar implementation still hashes to the pinned blob", () => {
-    expect(pinnedBlob?.ok, `git rev-parse ${V1.ref}:${V1.file} failed`).toBe(true)
-    expect(pinnedBlob?.stdout.toString().trim()).toBe(V1.blob)
+    const blob = git(["rev-parse", `${V1.ref}:${V1.file}`])
+    expect(blob, `git rev-parse ${V1.ref}:${V1.file} failed`).toBeDefined()
+    expect(blob!.trim()).toBe(V1.blob)
   })
 
   test("the pinned blob bytes still hash to the pinned sha256", () => {
-    expect(pinnedBytes?.ok, `git cat-file blob ${V1.blob} failed`).toBe(true)
-    expect(sha256(pinnedBytes?.stdout as Buffer)).toBe(V1.sha256)
+    const proc = Bun.spawnSync(["git", "-C", CORE_REPO, "cat-file", "blob", V1.blob], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    expect(proc.exitCode, `git cat-file blob ${V1.blob} failed`).toBe(0)
+    const actual = createHash("sha256").update(Buffer.from(proc.stdout)).digest("hex")
+    expect(actual).toBe(V1.sha256)
   })
 })

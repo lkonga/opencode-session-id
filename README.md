@@ -1,52 +1,68 @@
 # opencode-session-id
 
-OC2/V2 TUI plugin that shows the **current session ID in the session sidebar,
-directly beneath the session title** — parity with the V1 row implemented
+OC2/V2 TUI plugin that shows the **current session ID in the session sidebar, on
+the row directly beneath the session title** — parity with the V1 row implemented
 upstream in `packages/tui/src/routes/session/sidebar.tsx`.
 
 Tracking issue: <https://github.com/lkonga/opencode-patches/issues/264>
 
+Depends on the additive core slot `sidebar.title`
+(`lkonga/opencode` branch `feat/v2-sidebar-title-slot-264`). Review that core
+change first — see **Landing order** below.
+
 ## Provenance — where the V1 behavior actually comes from
 
-The V1 behavior is **upstream core**, not a fork patch, not config, not a plugin:
+Upstream V1 core, not a fork patch, not config, not a plugin:
 
 | | |
 |---|---|
-| File | `packages/tui/src/routes/session/sidebar.tsx` |
-| Lines | 57–62, inside the `sidebar_title` slot's default content |
-| Upstream commit | `b5aba5807cfbcafc57ffd488cbcb0148f8f1f4d6` — `feat(tui): show session ID in sidebar on non-prod channels (#23185)` |
-| Channel gate | added by `106f8e94d67` (`refactor(tui): extract standalone package`) |
-| V1 reference | tag `v1.18.30` = `3104c1428ec91f809e5ab86631300de41eb6952e` |
+| File | `packages/tui/src/routes/session/sidebar.tsx`, lines 57–62, inside the `sidebar_title` slot's default content |
+| Commit | `b5aba5807cfbcafc57ffd488cbcb0148f8f1f4d6` — `feat(tui): show session ID in sidebar on non-prod channels (#23185)` |
+| What it added | **both** the `<Show when={InstallationChannel !== "latest"}>` gate **and** the `<text>{props.sessionID}</text>` row |
+| Later refactor | `106f8e94d67` (`refactor(tui): extract standalone package`) changed only where the channel comes from — `useTuiBuildInfo().channel` → the `InstallationChannel` constant import. The gate itself is unchanged. |
+| V1 reference | tag `v1.18.30` = `3104c1428ec91f809e5ab86631300de41eb6952e`; blob `0c5d2b31…`; sha256 `9837bf1e…ca8bc1` |
 
-```tsx
-<b>{session()!.title}</b>
-<Show when={InstallationChannel !== "latest"}>
-  <text fg={theme.textMuted}>{props.sessionID}</text>
-</Show>
-```
-
-Because the behavior belongs to core rather than to an existing plugin, there is
-no owning plugin to extend. `opencode-retitle` (its contract forbids a second
-slot claim), `opencode-subagent-watch` (its claim renders the subagents panel),
+Because the behavior belongs to core rather than to a plugin, there was no owner
+to extend. `opencode-retitle` (its contract forbids a second slot claim),
+`opencode-subagent-watch` (its claim renders the subagents panel),
 `opencode-visual-cache` (third-party, integrity-pinned) and
 `opencode-fork-settings` (a different, lockstep-pinned seam) were all rejected as
-hosts. Hence this narrow standalone plugin.
+hosts.
 
-## Why this is a plugin and not a core change
+## Entrypoint
 
-Verified against `v2-production` `142096a9b1ac0077de551b803523c29b9b12ea5e`:
+The V2 loader resolves `<plugin directory>/tui`, so the registered directory is
 
-| Fact | Evidence |
-|---|---|
-| Public slot registry | `packages/plugin/src/tui/context.ts:191-203` (`SlotMap`) |
-| Sidebar slots | only `sidebar.content` and `sidebar.footer`; **no `sidebar.title`** anywhere |
-| Mount site | `packages/tui/src/routes/session/sidebar.tsx:70` — the box immediately after the title block |
-| Claim order | `packages/tui/src/plugin/render.tsx:122-143` — `prepend` renders before host children and before every built-in `append` claim |
-| Channel gate | `packages/plugin/src/tui/context.ts:264-267` (`App { version, channel }`), published at `packages/tui/src/plugin/api.tsx:139` |
+```text
+/home/lkonga/codes/opencode-v2-runtime/opencode-session-id/v2
+```
 
-`prepend: "sidebar.content"` is therefore the first row of the sidebar content,
-i.e. directly beneath the title. The public API supports the placement, so the
-port is plugin-only: no core branch, no new slot, no sidebar fork.
+and the file it reaches is `v2/tui.tsx` (`v2/package.json` declares
+`exports: { "./tui": "./tui.tsx" }`). Register the **directory**, not the file.
+There is deliberately no `v2/tui.ts` sibling, because the loader's extension
+order would otherwise decide which file wins. The plugin is loaded from source —
+no build step.
+
+## Placement and geometry
+
+The core change mounts `sidebar.title` as the last child of the sidebar's title
+block, after the title and before that block's own `paddingBottom`:
+
+```text
+row 0   session title
+row 1   sidebar.title claim       ← this plugin's session id
+row 2   the title block's existing one-row gap
+row 3+  sidebar.content (scrolling)
+```
+
+So a claim lands at **title row + 1**, the pre-existing title-to-content gap is
+untouched, and the slot introduces no blank row. With nothing claiming the slot
+the sidebar renders exactly as before. Mounting it in the title block (rather
+than in the scrolling content) follows V1, where the row sits with the title, and
+follows the pinning V2 already chose for the title itself.
+
+Host-side assertions for that geometry live in the core repo:
+`packages/tui/test/routes/session/sidebar-title-slot.test.tsx`.
 
 ## Install (not performed by this change)
 
@@ -56,44 +72,78 @@ Registered as a TUI plugin directory in `~/.config/opencode-v2/cli.json`:
 "/home/lkonga/codes/opencode-v2-runtime/opencode-session-id/v2"
 ```
 
-**Ordering matters.** `opencode-visual-cache@1.7.3-oc2` also claims
-`prepend: "sidebar.content"`, and co-located `prepend` claims render in plugin
-enable order (i.e. `cli.json` order). To sit directly beneath the title this
-entry must appear **before** `opencode-visual-cache@1.7.3-oc2`, and
-`llm-config-wiring-v2/scripts/validate-v2-sidebar-integrations.py` should gain
-the matching index assertion.
-
-Also note the current V2 `cli.json` sets `session.sidebar: "hide"`; the sidebar
-must be visible for the row to be seen. This change does not touch that.
+The current V2 `cli.json` sets `session.sidebar: "hide"`; the sidebar must be
+visible for the row to be seen. That is a config decision and is not changed
+here.
 
 ## Tests
 
 ```bash
-cd /home/lkonga/codes/opencode-v2-runtime/opencode-session-id
-bun test v2
+bun test --conditions=browser v2
 ```
+
+`--conditions=browser` is required: `solid-js` maps the Node export condition to
+its SSR build, where memos never update and a falsy `<Show>` raises
+`Orphan text error`. `v2/test/environment.test.ts` fails loudly with that
+instruction if the reactive build is not active. The `test` script already
+includes the flag, so `bun run test` is equivalent.
 
 | File | Covers |
 |---|---|
-| `v2/test/session-id.test.tsx` | exact placement beneath the title, above other content; session switch with no stale id; no session; channel gate; reload → exactly one claim and one row; deactivation removes the row and leaks no subscriptions |
-| `v2/test/tui-contract.test.ts` | entrypoint resolution, single top-level runtime import, exactly one claim in the one placement |
-| `v2/test/v1-byte-guard.test.ts` | the V1 artifact is byte-identical (blob id + sha256, repo-backed) and this repo vendors no V1 path |
+| `v2/test/session-id.test.tsx` | claim shape; exact placement (title row + 1); the gap preserved and content still below it; no session; channel gate; reactive switch/clear; two-mount no-residue; reload → one claim and one row; deactivation removes the row with no leaked subscriptions |
+| `v2/test/tui-contract.test.ts` | entrypoint resolution; single top-level host import; exactly one claim on `sidebar.title`; block-comment-proof structural scan; no V1 path or filesystem reachability; the decision module holds no state |
+| `v2/test/v2-api-contract.test.ts` | the **current** V2 contract from `OPENCODE_V2_REF` (default `origin/v2-production`), plus the pinned base as a compatibility reference |
+| `v2/test/v1-byte-guard.test.ts` | the V1 artifact is byte-identical (blob id + sha256) and this repo vendors no V1 path |
+| `v2/test/environment.test.ts` | the reactive Solid build is active |
 
-The V1 byte guard is repo-backed: set `OPENCODE_CORE_REPO` to the V1/V2 clone
-(default `/home/lkonga/codes/opencode`). Where that clone is absent the
-repo-backed assertions skip with a visible reason; the self-contained invariants
-always run.
+### Core-repo dependency (fail-closed)
+
+The V1 and V2 contract guards read the core clone:
+
+```bash
+OPENCODE_CORE_REPO=<clone> bun run test
+```
+
+Default: `/home/lkonga/codes/opencode`. If the clone or a required ref is
+missing, those guards **fail** — they do not skip silently. Set
+`OPENCODE_CORE_OPTIONAL=1` to downgrade to an explicitly logged skip on hosts
+that cannot hold the clone. `OPENCODE_V2_REF` selects the ref the current-contract
+guard tracks.
+
+For the full gate the clone must contain both `v1.18.30` and
+`origin/v2-production`; a shallow clone of the review branch plus a
+`v1.18.30` tag fetch is enough.
+
+## Landing order (core first)
+
+1. Review and land the **core** change first: `lkonga/opencode`
+   `feat/v2-sidebar-title-slot-264` (`packages/plugin/src/tui/context.ts`,
+   `packages/tui/src/routes/session/sidebar.tsx`,
+   `packages/tui/test/routes/session/sidebar-title-slot.test.tsx`). The plugin
+   claims a slot that does not exist until this lands.
+2. Then review and merge this repository's `feat/issue-264-v2-session-id-sidebar`
+   to `main`; `main` currently points at a superseded commit (see the issue).
+3. Add a `plugin-pins.json` entry (`roles: ["tui"]`, repo + commit).
+4. Append the plugin `v2` directory to `~/.config/opencode-v2/cli.json`.
+5. Extend `scripts/validate-v2-sidebar-integrations.py` with an assertion that the
+   plugin is registered.
+6. `v2-backup-gate.sh --label pre-session-id`, then the atomic install + approved
+   restart from the V2 change workflow.
+7. Verify: `oc2 plugin list` includes the plugin; the sidebar shows the id under
+   the title; switching sessions updates it; no duplicate row after a reload.
+
+Step 4 no longer needs an ordering constraint: the previous revision claimed
+`prepend: "sidebar.content"`, where it had to beat `opencode-visual-cache` for
+the top row. `sidebar.title` has no other claimant.
 
 ## Fidelity notes
 
-- V1 renders the id in the title block, which is outside the sidebar
-  `scrollbox`; a plugin cannot render there (no `sidebar.title` slot). The row
-  is therefore the first row _inside_ the content area, separated from the title
-  by the host's one-row `paddingBottom` (`sidebar.tsx:32`). This is the closest
-  public placement and matches the convention the existing
-  `opencode-visual-cache` sidebar section already uses.
+- V1 renders the row inside the `sidebar_title` slot, which in V1 lives **inside
+  the scrollbox**; V2 pins its title block outside the scrollbox. The
+  title-adjacent slot follows V2's pinning, which is the closest the V2
+  architecture permits without restructuring the sidebar.
 - The row is plain muted text, exactly as V1 renders it, so terminal text
   selection and copy behave as they do for any other sidebar text.
 - The component holds no state: it derives the row from the reactive slot input
-  and `context.app.channel`. "No stale id" and "idempotent on reload" are
+  and `context.app.channel`, so "no stale id" and "idempotent on reload" are
   structural rather than remembered.

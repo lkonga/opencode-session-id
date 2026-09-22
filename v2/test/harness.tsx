@@ -3,13 +3,18 @@
  * Test doubles for the V2 TUI plugin surface, plus a model of the host's
  * sidebar layout.
  *
- * Everything here mirrors pinned core source (base `v2-production`
- * 142096a9b1ac0077de551b803523c29b9b12ea5e) rather than inventing a contract:
+ * The model mirrors the pinned core source rather than inventing a contract:
  *
- *   slot contract        packages/plugin/src/tui/context.ts:191-262
- *   plugin module shape  packages/plugin/src/tui/plugin.ts:7-14
- *   claim bucket order   packages/tui/src/plugin/render.tsx:122-143
- *   sidebar mount site   packages/tui/src/routes/session/sidebar.tsx:20-78
+ *   slot contract        packages/plugin/src/tui/context.ts (SlotMap, SlotClaim)
+ *   plugin module shape  packages/plugin/src/tui/plugin.ts
+ *   claim bucket order   packages/tui/src/plugin/render.tsx
+ *   sidebar layout       packages/tui/src/routes/session/sidebar.tsx
+ *
+ * The layout assertions that matter most — exact row geometry against the real
+ * `Sidebar` — live in the core repo at
+ * `packages/tui/test/routes/session/sidebar-title-slot.test.tsx`. This model
+ * exists for the plugin-side claim and rendering checks, and it mirrors the same
+ * title-block structure so the two agree.
  *
  * The fake context is a partial object literal cast at the boundary — the same
  * approach `opencode-retitle` uses (`v2/test/fake.ts`) — because the V2 host
@@ -100,61 +105,68 @@ export function createHarness(options: { readonly channel?: string } = {}): Harn
 }
 
 /**
- * The host's session sidebar, modelled on `sidebar.tsx:20-78` and the bucket
- * order in `render.tsx:122-143`.
+ * The host's session sidebar, modelled on `sidebar.tsx`.
  *
- *   root (title block, then the content block)
- *   ├─ title box — `paddingBottom={1}` on the real host (sidebar.tsx:32)
- *   └─ content box — `before`, then (`prepend`, host children, `append`) or
- *      `replace`, then `after` (sidebar.tsx:69-70)
+ *   root
+ *   ├─ title block — title, then the `sidebar.title` slot, then `paddingBottom={1}`
+ *   ├─ content box — `before`, then (`prepend`, host children, `append`) or
+ *   │                `replace`, then `after`
+ *   └─ footer block
  *
- * It exists so a test can assert *where* a claim lands relative to the title,
- * which a claim-shape assertion alone cannot show.
+ * Both slot inputs are handed over through a getter, as the host's `mergeProps`
+ * does, so a session switch stays visible to the plugin.
  */
 export function HostSidebar(props: {
   readonly title: string
   readonly sessionID: string
   readonly claims: readonly RecordedClaim[]
   readonly children?: JSX.Element
+  readonly content?: JSX.Element
 }): JSX.Element {
-  const bucket = (placement: Placement): RecordedClaim[] =>
-    props.claims.filter((claim) => claim.target === "sidebar.content" && claim.placement === placement)
+  const bucket = (target: string, placement: Placement): RecordedClaim[] =>
+    props.claims.filter((claim) => claim.target === target && claim.placement === placement)
 
-  // The real host hands every claim the slot input through a getter and merges
-  // it with `mergeProps` (`render.tsx:99-121`), so the input stays reactive
-  // after the render body has run. Passing a plain value here would make a
-  // session switch invisible to the plugin — i.e. the model would be wrong, not
-  // the plugin.
   const input = {
     get sessionID(): string {
       return props.sessionID
     },
   } as { readonly sessionID: string }
 
+  const slot = (target: string, hostChildren?: JSX.Element) => (
+    <>
+      <For each={bucket(target, "before")}>{(claim) => claim.render(input)}</For>
+      <Show
+        when={bucket(target, "replace")[0]}
+        fallback={
+          <>
+            <For each={bucket(target, "prepend")}>{(claim) => claim.render(input)}</For>
+            {hostChildren}
+            <For each={bucket(target, "append")}>{(claim) => claim.render(input)}</For>
+          </>
+        }
+      >
+        {(claim) => claim().render(input)}
+      </Show>
+      <For each={bucket(target, "after")}>{(claim) => claim.render(input)}</For>
+    </>
+  )
+
   return (
     <box flexDirection="column">
-      {/* sidebar.tsx:32-49 — the title block owns one blank padding row. */}
-      <box flexShrink={0} paddingBottom={1}>
+      {/* sidebar.tsx: title block — title, the title-adjacent slot, then padding. */}
+      <box flexShrink={0} paddingRight={2} paddingBottom={1}>
         <text>
           <b>{props.title}</b>
         </text>
+        {slot("sidebar.title")}
       </box>
-      {/* sidebar.tsx:69-70 — the box the `sidebar.content` slot is mounted in. */}
+      {/* sidebar.tsx: the scrolling content box. */}
       <box flexShrink={0} gap={1} paddingRight={1}>
-        <For each={bucket("before")}>{(claim) => claim.render(input)}</For>
-        <Show
-          when={bucket("replace")[0]}
-          fallback={
-            <>
-              <For each={bucket("prepend")}>{(claim) => claim.render(input)}</For>
-              {props.children}
-              <For each={bucket("append")}>{(claim) => claim.render(input)}</For>
-            </>
-          }
-        >
-          {(claim) => claim().render(input)}
-        </Show>
-        <For each={bucket("after")}>{(claim) => claim.render(input)}</For>
+        {slot("sidebar.content", props.content ?? props.children)}
+      </box>
+      {/* sidebar.tsx: the pinned footer block. */}
+      <box flexShrink={0} gap={1} paddingTop={1}>
+        {slot("sidebar.footer")}
       </box>
     </box>
   )

@@ -4,9 +4,12 @@
  *
  * They mount the real plugin through a typed fake `Plugin.Context` and render
  * its claim through a model of the host sidebar, so they cover the things a
- * claim-shape assertion cannot: where the row lands relative to the title, what
- * happens on a session switch, what happens with no session, and that a reload
- * neither duplicates nor strands the row.
+ * claim-shape assertion cannot: exact placement, session switch, no session,
+ * channel gate, and reload behaviour.
+ *
+ * The host-side geometry (real `Sidebar`, real `Slot`, real `resolveSlots`) is
+ * asserted in the core repo:
+ * `packages/tui/test/routes/session/sidebar-title-slot.test.tsx`.
  */
 import { describe, expect, mock, test } from "bun:test"
 import { testRender } from "@opentui/solid"
@@ -32,13 +35,11 @@ const SESSION_ID = "ses_test_0001"
 const WIDTH = 42
 const HEIGHT = 16
 /**
- * `sidebar.tsx:32` — the title block is `flexShrink={0}` with
- * `paddingBottom={1}`, so exactly one blank row separates the title from the
- * first row of the sidebar content. The claim therefore lands at title line + 2;
- * nothing host-owned sits between them.
+ * The title block is `flexShrink={0}` with `paddingBottom={1}`, so the claimed
+ * row lands at title row + 1 and the title-to-content gap stays one row.
  */
-const TITLE_BLOCK_PADDING_BOTTOM = 1
-const ROW_OFFSET_FROM_TITLE = 1 + TITLE_BLOCK_PADDING_BOTTOM
+const ROW_OFFSET_FROM_TITLE = 1
+const GAP_AFTER_TITLE_BLOCK = 1
 
 function activate(harness: Harness): void {
   const cleanup = plugin.setup(harness.context)
@@ -48,7 +49,7 @@ function activate(harness: Harness): void {
 async function mount(
   sessionID: () => string,
   harness: Harness,
-  options: { readonly children?: () => unknown } = {},
+  options: { readonly content?: () => unknown } = {},
 ): Promise<TestRendererSetup> {
   const setup = await testRender(
     () => (
@@ -56,7 +57,7 @@ async function mount(
         title={TITLE}
         sessionID={sessionID()}
         claims={harness.liveClaims()}
-        children={options.children?.() as never}
+        content={options.content?.() as never}
       />
     ),
     { width: WIDTH, height: HEIGHT },
@@ -94,14 +95,14 @@ describe("V2 plugin definition", () => {
     expect(typeof plugin.setup).toBe("function")
   })
 
-  test("registers exactly one claim, prepended to sidebar.content", () => {
+  test("registers exactly one claim on the title-adjacent slot", () => {
     const harness = createHarness()
     activate(harness)
 
     expect(harness.liveClaims()).toHaveLength(1)
     const [claim] = harness.liveClaims()
     expect(claim?.placement).toBe("prepend")
-    expect(claim?.target).toBe("sidebar.content")
+    expect(claim?.target).toBe("sidebar.title")
   })
 })
 
@@ -116,19 +117,21 @@ describe("sidebar placement", () => {
     expect(countOf(frame, SESSION_ID)).toBe(1)
   })
 
-  test("renders above every other sidebar content row", async () => {
+  test("keeps the title-to-content gap and renders above the content rows", async () => {
     const harness = createHarness()
     activate(harness)
 
     const frame = await frameOf(
       await mount(() => SESSION_ID, harness, {
-        // Stands in for the host's own `sidebar.content` children and the
-        // `append` claims of other plugins.
-        children: () => <text>Token Cache</text>,
+        content: () => <text>Token Cache</text>,
       }),
     )
 
-    expect(lineOf(frame, SESSION_ID)).toBeLessThan(lineOf(frame, "Token Cache"))
+    const title = lineOf(frame, TITLE)
+    expect(lineOf(frame, SESSION_ID)).toBe(title + 1)
+    // The claimed row does not consume the gap: content still starts one row
+    // after it, exactly where the host put it.
+    expect(lineOf(frame, "Token Cache")).toBe(title + 1 + ROW_OFFSET_FROM_TITLE + GAP_AFTER_TITLE_BLOCK)
   })
 
   test("renders nothing when the host mounts no session", async () => {

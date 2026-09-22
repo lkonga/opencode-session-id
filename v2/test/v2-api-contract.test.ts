@@ -1,60 +1,57 @@
 /**
  * V2 API contract.
  *
- * Pins the public host surface this plugin is built on to one exact base, so an
- * upstream refactor that moves or removes it fails here with the file and line
- * rather than silently degrading the row in a running TUI.
+ * Two jobs, deliberately separated:
  *
- * The base is the verified `v2-production` tip this port was developed against
- * (also recorded in `README.md` and issue lkonga/opencode-patches#264).
+ * 1. CURRENT CONTRACT — tracks the *intended* host surface, read from a mutable
+ *    ref (`OPENCODE_V2_REF`, default `origin/v2-production`), so a change to the
+ *    live contract fails here with the file and line. This is what catches API
+ *    drift; an immutable SHA never can.
+ * 2. PINNED COMPATIBILITY REFERENCE — the base this port was developed against
+ *    (`142096a9...`), kept so the *origin* of the design stays verifiable: it
+ *    documents that `sidebar.title` did not exist there, which is exactly why
+ *    the additive core change was required.
  *
- * Repo-backed, like `v1-byte-guard.test.ts`: set `OPENCODE_CORE_REPO` to the
- * V1/V2 clone; assertions skip with a visible reason when it is absent.
+ * Fail-closed: when the clone or a ref is missing this suite goes RED unless
+ * `OPENCODE_CORE_OPTIONAL=1` asks for an explicit skip. See `core-repo.ts`.
  */
 import { describe, expect, test } from "bun:test"
-import fs from "node:fs"
-import path from "node:path"
+import { CORE_REPO, coreGate, git, requireGate } from "./core-repo"
 
-const BASE = "142096a9b1ac0077de551b803523c29b9b12ea5e"
-const REPO = process.env["OPENCODE_CORE_REPO"] ?? "/home/lkonga/codes/opencode"
+/** The mutable ref that must always describe the intended contract. */
+const CURRENT = process.env["OPENCODE_V2_REF"] ?? "origin/v2-production"
+/** The immutable base this port was built on, kept as a reference. */
+const PINNED = "142096a9b1ac0077de551b803523c29b9b12ea5e"
 
-const hasRepo = fs.existsSync(path.join(REPO, ".git"))
+const SLOTS_FILE = "packages/plugin/src/tui/context.ts"
+const SIDEBAR_FILE = "packages/tui/src/routes/session/sidebar.tsx"
+const RENDER_FILE = "packages/tui/src/plugin/render.tsx"
 
-/** Whether the pinned base commit is actually in `REPO` (a V1-only clone is not enough). */
-const reachable =
-  hasRepo &&
-  Bun.spawnSync(["git", "-C", REPO, "cat-file", "-e", `${BASE}^{commit}`], { stdout: "pipe", stderr: "pipe" })
-    .exitCode === 0
+const currentGate = coreGate(CURRENT, `V2 current contract (${CURRENT})`)
+const pinnedGate = coreGate(PINNED, `V2 pinned reference (${PINNED})`)
 
-function show(file: string): string | undefined {
-  const proc = Bun.spawnSync(["git", "-C", REPO, "show", `${BASE}:${file}`], { stdout: "pipe", stderr: "pipe" })
-  return proc.exitCode === 0 ? Buffer.from(proc.stdout).toString("utf8") : undefined
+function show(ref: string, file: string): string | undefined {
+  return git(["show", `${ref}:${file}`])
 }
 
-// Skipped when `REPO` does not contain the pinned base — e.g. a build host whose
-// clone only carries the V1 history. Point `OPENCODE_CORE_REPO` at a clone that
-// has `v2-production` to run these.
-const repoBacked = describe.skipIf(!reachable)
+test("REQUIRED: the current V2 contract ref is available", requireGate(currentGate, "V2 current contract"))
+test("REQUIRED: the pinned V2 reference is available", requireGate(pinnedGate, "V2 pinned reference"))
 
-repoBacked(`V2 public API at ${BASE.slice(0, 12)}`, () => {
-  const slots = show("packages/plugin/src/tui/context.ts")
-  const sidebar = show("packages/tui/src/routes/session/sidebar.tsx")
-  const render = show("packages/tui/src/plugin/render.tsx")
+describe.skipIf(!currentGate.present)(`V2 current contract at ${CURRENT}`, () => {
+  const slots = show(CURRENT, SLOTS_FILE)
+  const sidebar = show(CURRENT, SIDEBAR_FILE)
+  const render = show(CURRENT, RENDER_FILE)
 
-  test("the pinned base is reachable", () => {
-    expect(slots, `${BASE} not readable from ${REPO}`).toBeDefined()
+  test("the current ref is readable", () => {
+    expect(slots, `${CURRENT}:${SLOTS_FILE} not readable from ${CORE_REPO}`).toBeDefined()
     expect(sidebar).toBeDefined()
     expect(render).toBeDefined()
   })
 
-  test("sidebar.content is a public slot whose input is the session id", () => {
+  test("sidebar.title is a public slot whose input is the session id", () => {
+    expect(slots).toContain('readonly "sidebar.title": { readonly sessionID: string }')
     expect(slots).toContain('readonly "sidebar.content": { readonly sessionID: string }')
     expect(slots).toContain('readonly "sidebar.footer": { readonly sessionID: string }')
-  })
-
-  test("there is no sidebar.title slot, which is why this is a plugin", () => {
-    expect(slots).not.toContain("sidebar.title")
-    expect(slots?.includes('readonly "sidebar.title"')).toBe(false)
   })
 
   test("the channel the V1 gate reads is published to plugins", () => {
@@ -62,12 +59,24 @@ repoBacked(`V2 public API at ${BASE.slice(0, 12)}`, () => {
     expect(slots).toContain("readonly channel: string")
   })
 
-  test("sidebar.content is mounted in the box directly after the title block", () => {
+  test("sidebar.title is mounted in the title block, after the title", () => {
     const lines = sidebar!.split("\n")
-    const titleBlock = lines.findIndex((line) => line.includes("paddingBottom={1}"))
-    const slot = lines.findIndex((line) => line.includes('<Slot path="sidebar.content"'))
-    expect(titleBlock).toBeGreaterThanOrEqual(0)
-    expect(slot).toBeGreaterThan(titleBlock)
+    const titleRow = lines.findIndex((line) => line.includes("title_shimmer"))
+    const slot = lines.findIndex((line) => line.includes('<Slot path="sidebar.title"'))
+    const titleBlockEnd = lines.findIndex((line, index) => index > slot && line.includes("</box>"))
+    expect(titleRow).toBeGreaterThanOrEqual(0)
+    // The slot is mounted after the title inside the same block, i.e. before the
+    // block closes — that is what makes it title row + 1.
+    expect(slot).toBeGreaterThan(titleRow)
+    expect(titleBlockEnd).toBeGreaterThan(slot)
+  })
+
+  test("the title-adjacent mount precedes the box's bottom padding", () => {
+    const lines = sidebar!.split("\n")
+    const blockStart = lines.findIndex((line) => line.includes("paddingBottom={1}"))
+    const slot = lines.findIndex((line) => line.includes('<Slot path="sidebar.title"'))
+    expect(blockStart).toBeGreaterThanOrEqual(0)
+    expect(slot).toBeGreaterThan(blockStart)
   })
 
   test("prepend claims render before host children and before append claims", () => {
@@ -82,5 +91,26 @@ repoBacked(`V2 public API at ${BASE.slice(0, 12)}`, () => {
     expect(prepend).toBeGreaterThanOrEqual(0)
     expect(children).toBeGreaterThan(prepend)
     expect(append).toBeGreaterThan(children)
+  })
+})
+
+describe.skipIf(!pinnedGate.present)(`V2 pinned reference at ${PINNED.slice(0, 12)}`, () => {
+  const slots = show(PINNED, SLOTS_FILE)
+  const sidebar = show(PINNED, SIDEBAR_FILE)
+
+  test("the pinned base predates sidebar.title, which is why the core change was needed", () => {
+    expect(slots).toBeDefined()
+    expect(slots!.includes('readonly "sidebar.title"')).toBe(false)
+    expect(slots).toContain('readonly "sidebar.content": { readonly sessionID: string }')
+    expect(slots).toContain('readonly "sidebar.footer": { readonly sessionID: string }')
+    expect(slots).toContain("readonly channel: string")
+  })
+
+  test("the pinned base mounted only sidebar.content after the title block", () => {
+    const lines = sidebar!.split("\n")
+    const titleBlock = lines.findIndex((line) => line.includes("paddingBottom={1}"))
+    const slot = lines.findIndex((line) => line.includes('<Slot path="sidebar.content"'))
+    expect(titleBlock).toBeGreaterThanOrEqual(0)
+    expect(slot).toBeGreaterThan(titleBlock)
   })
 })
