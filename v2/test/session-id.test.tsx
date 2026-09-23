@@ -16,7 +16,7 @@ import { testRender } from "@opentui/solid"
 import type { TestRendererSetup } from "@opentui/core/testing"
 import { createRoot, createSignal } from "solid-js"
 import type { Plugin } from "@opencode/plugin/tui"
-import { createSessionIDRow } from "../session-id"
+import { createSessionIDRow } from "../src/session-id"
 import { createHarness, HostSidebar, type Harness } from "./harness"
 
 // The V2 host injects `@opencode/plugin/tui` through the OpenTUI runtime module
@@ -28,7 +28,7 @@ mock.module("@opencode/plugin/tui", () => ({
   },
 }))
 
-const plugin = (await import("../tui.tsx")).default
+const plugin = (await import("../tui.js")).default
 
 const TITLE = "Sidebar parity"
 const SESSION_ID = "ses_test_0001"

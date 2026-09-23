@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./tui": "./tui.tsx"
+    "./tui": "./tui.js"
   },
   "scripts": {
     "test": "bun test --conditions=browser"

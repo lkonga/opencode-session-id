@@ -37,11 +37,14 @@ The V2 loader resolves `<plugin directory>/tui`, so the registered directory is
 /home/lkonga/codes/opencode-v2-runtime/opencode-session-id/v2
 ```
 
-and the file it reaches is `v2/tui.tsx` (`v2/package.json` declares
-`exports: { "./tui": "./tui.tsx" }`). Register the **directory**, not the file.
-There is deliberately no `v2/tui.ts` sibling, because the loader's extension
-order would otherwise decide which file wins. The plugin is loaded from source —
-no build step.
+and the file it reaches is the checked-in `v2/tui.js` bundle (`v2/package.json`
+also declares `exports: { "./tui": "./tui.js" }`). Register the **directory**,
+not the file. Source lives under `v2/src`; there is deliberately no top-level
+`v2/tui.ts` or `v2/tui.tsx` sibling, because the loader's extension order would
+otherwise bypass the bundle. The artifact bundles the complete plugin module
+graph and has no `solid-js` import or dependency on repository `node_modules`.
+Only the host-injected `@opencode/plugin/tui` and OpenTUI JSX runtime contracts
+remain external, which preserves the host's single reactive/rendering runtime.
 
 ## Placement and geometry
 
@@ -79,11 +82,12 @@ here.
 ## Tests
 
 ```bash
-bun test --conditions=browser v2
+bun run test
 ```
 
-`--conditions=browser` is required: `solid-js` maps the Node export condition to
-its SSR build, where memos never update and a falsy `<Show>` raises
+`bun run test` first regenerates the checked-in bundle and its external source
+map, then runs the suite. `--conditions=browser` is required: `solid-js` maps
+the Node export condition to its SSR build, where memos never update and a falsy `<Show>` raises
 `Orphan text error`. `v2/test/environment.test.ts` fails loudly with that
 instruction if the reactive build is not active. The `test` script already
 includes the flag, so `bun run test` is equivalent.
@@ -91,7 +95,8 @@ includes the flag, so `bun run test` is equivalent.
 | File | Covers |
 |---|---|
 | `v2/test/session-id.test.tsx` | claim shape; exact placement (title row + 1); the gap preserved and content still below it; no session; channel gate; reactive switch/clear; two-mount no-residue; reload → one claim and one row; deactivation removes the row with no leaked subscriptions |
-| `v2/test/tui-contract.test.ts` | entrypoint resolution; single top-level host import; exactly one claim on `sidebar.title`; block-comment-proof structural scan; no V1 path or filesystem reachability; the decision module holds no state |
+| `v2/test/tui-contract.test.ts` | entrypoint resolution; host-only artifact imports; exactly one claim on `sidebar.title`; block-comment-proof structural scan; no V1 path or filesystem reachability; the decision module holds no state |
+| `v2/test/distributable.test.ts` | the checked-in bundle has no bare `solid-js` import and initializes after only the distributable files are copied to a temporary directory with no `node_modules` |
 | `v2/test/v2-api-contract.test.ts` | the **current** V2 contract from `OPENCODE_V2_REF` (default `origin/v2-production`), plus the pinned base as a compatibility reference |
 | `v2/test/v1-byte-guard.test.ts` | the V1 artifact is byte-identical (blob id + sha256) and this repo vendors no V1 path |
 | `v2/test/environment.test.ts` | the reactive Solid build is active |

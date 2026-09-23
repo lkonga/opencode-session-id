@@ -1,4 +1,4 @@
-/** @jsxImportSource @opentui/solid */
+/** @jsxImportSource ./jsx */
 /**
  * opencode-session-id — V2/OC2 TUI plugin.
  *
@@ -6,9 +6,9 @@
  * below the session title — V1 parity for the row implemented upstream in
  * `packages/tui/src/routes/session/sidebar.tsx` (V1 `v1.18.30`).
  *
- * Entrypoint: the V2 loader resolves `<plugin directory>/tui`, so this file is
- * reached as `<...>/opencode-session-id/v2/tui.tsx`. Register the `v2`
- * directory, not this file.
+ * Source entrypoint: `bun run build:v2` bundles this module and its runtime
+ * dependencies to `v2/tui.js`. The V2 loader resolves that self-contained
+ * artifact as `<plugin directory>/tui`; register the `v2` directory.
  *
  * Public V2 boundary only:
  *   slot map          packages/plugin/src/tui/context.ts (`sidebar.title`, input `{ sessionID }`)
@@ -31,7 +31,6 @@
  * immediately and a reload cannot duplicate or strand a row.
  */
 import { Plugin } from "@opencode/plugin/tui"
-import { Show } from "solid-js"
 import { createSessionIDRow } from "./session-id"
 
 export const PLUGIN_ID = "opencode-session-id-v2-tui"
@@ -45,14 +44,13 @@ function SessionID(props: { readonly context: Plugin.Context; readonly sessionID
     sessionID: () => props.sessionID,
   })
 
-  // The V1 shape, including the `Show` gate: a falsy row renders no node, so a
-  // missing session and the `latest` channel are both "no row", never a stale
-  // one. (Tests must run on the client Solid build — see `environment.test.ts`.)
-  return (
-    <Show when={row()}>
-      {(sessionID) => <text fg={props.context.theme.text.muted}>{sessionID()}</text>}
-    </Show>
-  )
+  // Return an accessor so the host's Solid owner tracks the merged slot getter.
+  // Using the host owner preserves session-switch reactivity without shipping a
+  // second Solid runtime. A falsy row renders no node, matching V1's Show gate.
+  return () => {
+    const sessionID = row()
+    return sessionID ? <text fg={props.context.theme.text.muted}>{sessionID}</text> : undefined
+  }
 }
 
 export default Plugin.define({

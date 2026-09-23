@@ -16,6 +16,8 @@ import path from "node:path"
 import { stripComments } from "./source"
 
 const v2 = path.resolve(import.meta.dir, "..")
+const src = path.join(v2, "src")
+const artifact = path.join(v2, "tui.js")
 
 const read = (file: string) => fs.readFileSync(file, "utf8")
 /** Comments (line and block) removed, so scans describe code and not prose. */
@@ -23,7 +25,8 @@ const code = stripComments
 
 /** Parsed import specifiers of one module — a parse, not a substring match. */
 function importsOf(file: string): string[] {
-  const transpiler = new Bun.Transpiler({ loader: file.endsWith(".tsx") ? "tsx" : "ts" })
+  const loader = file.endsWith(".tsx") ? "tsx" : file.endsWith(".ts") ? "ts" : "js"
+  const transpiler = new Bun.Transpiler({ loader })
   return transpiler.scan(read(file)).imports.map((item) => item.path)
 }
 
@@ -36,45 +39,44 @@ function resolvesTo(fromFile: string, specifier: string): string | undefined {
   return undefined
 }
 
-/** Every TypeScript source of the V2 plugin (tests excluded). */
-const V2_MODULES = fs
-  .readdirSync(v2, { withFileTypes: true })
-  .filter((entry) => entry.isFile() && /\.tsx?$/.test(entry.name))
-  .map((entry) => entry.name)
+/** Every TypeScript source of the V2 plugin (tests and generated bundle excluded). */
+function sourceModules(directory: string): string[] {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const relative = path.relative(src, path.join(directory, entry.name))
+    if (entry.isDirectory()) return sourceModules(path.join(directory, entry.name))
+    return /\.tsx?$/.test(entry.name) ? [relative] : []
+  })
+}
+
+const V2_MODULES = sourceModules(src)
 
 const pkg = JSON.parse(read(path.join(v2, "package.json")))
 
 describe("V2 entrypoint", () => {
   test("exposes the directory-resolved ./tui entrypoint the loader resolves", () => {
     // The loader joins `<plugin directory>/tui` and resolves it as a path, so
-    // the registered directory is `.../opencode-session-id/v2` and the file it
-    // reaches is `v2/tui.tsx`. A `tui.ts` sibling must not exist, or extension
-    // order would decide which one wins.
-    expect(pkg.exports["./tui"]).toBe("./tui.tsx")
-    expect(fs.existsSync(path.join(v2, "tui.tsx"))).toBe(true)
+    // the registered directory is `.../opencode-session-id/v2` and must reach
+    // the bundle, never a source sibling selected earlier by extension order.
+    expect(pkg.exports["./tui"]).toBe("./tui.js")
+    expect(fs.existsSync(artifact)).toBe(true)
+    expect(Bun.resolveSync(path.join(v2, "tui"), v2)).toBe(artifact)
     expect(fs.existsSync(path.join(v2, "tui.ts"))).toBe(false)
+    expect(fs.existsSync(path.join(v2, "tui.tsx"))).toBe(false)
   })
 
-  test("imports only host-provided specifiers at the top level", () => {
-    const tui = path.join(v2, "tui.tsx")
-    const specifiers = importsOf(tui)
-    // `@opencode/plugin/tui` is injected through the OpenTUI runtime module map;
-    // `solid-js` is the renderer's own peer. Nothing else may be imported, so the
-    // plugin stays loadable from source without a build step.
-    expect(specifiers.filter((specifier) => !specifier.startsWith("."))).toEqual([
-      "@opencode/plugin/tui",
-      "solid-js",
-    ])
+  test("the bundle imports only host-provided contracts", () => {
+    expect(importsOf(artifact)).toEqual(["@opencode/plugin/tui", "@opentui/solid"])
 
-    for (const specifier of specifiers.filter((item) => item.startsWith("."))) {
-      const target = resolvesTo(tui, specifier)
+    const sourceEntrypoint = path.join(src, "tui.tsx")
+    for (const specifier of importsOf(sourceEntrypoint).filter((item) => item.startsWith("."))) {
+      const target = resolvesTo(sourceEntrypoint, specifier)
       expect(target, `${specifier} must resolve`).toBeDefined()
-      expect(path.relative(v2, target as string).startsWith("..")).toBe(false)
+      expect(path.relative(src, target as string).startsWith("..")).toBe(false)
     }
   })
 
   test("declares exactly one claim, prepended to sidebar.title", () => {
-    const source = code(read(path.join(v2, "tui.tsx")))
+    const source = code(read(path.join(src, "tui.tsx")))
 
     // One claim, or the row's position stops being deterministic.
     expect(source.match(/ui\.slot\(/g)).toHaveLength(1)
@@ -101,7 +103,7 @@ describe("V2 entrypoint", () => {
 describe("V2 module graph", () => {
   test("no V2 module imports a V1 path", () => {
     const offenders = V2_MODULES.filter((file) =>
-      importsOf(path.join(v2, file)).some((specifier) => specifier.includes("packages/tui")),
+      importsOf(path.join(src, file)).some((specifier) => specifier.includes("packages/tui")),
     )
     expect(offenders).toEqual([])
   })
@@ -111,18 +113,18 @@ describe("V2 module graph", () => {
     // no OS environment, and no V1 config root.
     const markers = ["OPENCODE_CONFIG_DIR", "homedir", "session.sidebar"]
     for (const file of V2_MODULES) {
-      const source = code(read(path.join(v2, file)))
+      const source = code(read(path.join(src, file)))
       for (const marker of markers) {
         expect(source, `${file} names ${marker}`).not.toContain(marker)
       }
     }
   })
 
-  test("the decision module depends only on solid-js and holds no state", () => {
-    const file = path.join(v2, "session-id.ts")
+  test("the decision module has no runtime dependency and holds no state", () => {
+    const file = path.join(src, "session-id.ts")
     const source = code(read(file))
 
-    expect(importsOf(file)).toEqual(["solid-js"])
+    expect(importsOf(file)).toEqual([])
     expect(source).toContain("export function sessionIDRow")
     expect(source).toContain("export function createSessionIDRow")
     // No state is the property that makes a stale id impossible; a signal or a

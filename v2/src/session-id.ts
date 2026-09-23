@@ -22,8 +22,6 @@
  * something the renderer has to remember.
  */
 
-import { createMemo } from "solid-js"
-
 /** The one channel where V1 hides the row (`InstallationChannel !== "latest"`). */
 export const CHANNEL_HIDING_SESSION_ID = "latest"
 
@@ -60,5 +58,5 @@ export function createSessionIDRow(input: {
   readonly channel: () => string | undefined
   readonly sessionID: () => string | undefined
 }): () => string | undefined {
-  return createMemo(() => sessionIDRow({ channel: input.channel(), sessionID: input.sessionID() }))
+  return () => sessionIDRow({ channel: input.channel(), sessionID: input.sessionID() })
 }

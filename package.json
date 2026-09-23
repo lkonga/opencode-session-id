@@ -17,9 +17,11 @@
     "sidebar"
   ],
   "license": "MIT",
+  "packageManager": "bun@1.4.2",
   "scripts": {
-    "test": "bun test --conditions=browser v2",
-    "test:no-core": "OPENCODE_CORE_OPTIONAL=1 bun test --conditions=browser v2"
+    "build:v2": "bun build ./v2/src/tui.tsx --outdir ./v2 --entry-naming tui.js --target=bun --format=esm --sourcemap=linked --conditions=browser --external=@opencode/plugin/tui --external=@opentui/solid",
+    "test": "bun run build:v2 && bun test --conditions=browser v2",
+    "test:no-core": "bun run build:v2 && OPENCODE_CORE_OPTIONAL=1 bun test --conditions=browser v2"
   },
   "devDependencies": {
     "@opentui/core": "0.5.10",
